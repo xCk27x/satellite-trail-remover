@@ -183,6 +183,9 @@ def train_on_device(obj_names, mvtec_path, run_basename):
     # ap_pixel_list = []
     ap_list = []
     cnt_total = 0
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     for obj_name in obj_names:
         print(obj_name)
         run_name_pre = 'vq_model_pretrained_128_4096'
@@ -199,47 +202,37 @@ def train_on_device(obj_names, mvtec_path, run_basename):
         model_vq = DiscreteLatentModel(num_hiddens, num_residual_layers, num_residual_hiddens,
                       num_embeddings, embedding_dim,
                       commitment_cost, decay)
-        model_vq.cuda()
+        model_vq.to(device)
         model_vq.load_state_dict(
-            torch.load("./models/" + run_name_pre + ".pckl", map_location='cuda:0'))
+            torch.load("./models/" + run_name_pre + ".pckl", map_location=device))
         model_vq.eval()
-
-
 
         sub_res_hi_module = SubspaceRestrictionModule(embedding_size=embedding_dim)
         sub_res_hi_module.load_state_dict(
-            torch.load("./models/" + run_name + "subspace_restriction_hi_"+obj_name+".pckl", map_location='cuda:0'))
-        sub_res_hi_module.cuda()
+            torch.load("./models/" + run_name + "subspace_restriction_hi_"+obj_name+".pckl", map_location=device))
+        sub_res_hi_module.to(device)
         sub_res_hi_module.eval()
 
         sub_res_lo_module = SubspaceRestrictionModule(embedding_size=embedding_dim)
         sub_res_lo_module.load_state_dict(
-            torch.load("./models/" + run_name + "subspace_restriction_lo_"+obj_name+".pckl", map_location='cuda:0'))
-        sub_res_lo_module.cuda()
+            torch.load("./models/" + run_name + "subspace_restriction_lo_"+obj_name+".pckl", map_location=device))
+        sub_res_lo_module.to(device)
         sub_res_lo_module.eval()
-
 
         anom_det_module = AnomalyDetectionModule(embedding_size=embedding_dim)
         anom_det_module.load_state_dict(
-            torch.load("./models/" + run_name + "anomaly_det_module_"+obj_name+".pckl", map_location='cuda:0'))
-        anom_det_module.cuda()
+            torch.load("./models/" + run_name + "anomaly_det_module_"+obj_name+".pckl", map_location=device))
+        anom_det_module.to(device)
         anom_det_module.eval()
-
-        # upsample_module = UpsamplingModule(embedding_size=embedding_dim)
-        # upsample_module.load_state_dict(
-        #     torch.load("./models/" + run_name + "upsample_module_"+obj_name+".pckl", map_location='cuda:0'))
-        # upsample_module.cuda()
-        # upsample_module.eval()
 
         image_recon_module = ImageReconstructionNetwork(embedding_dim * 2,
                    num_hiddens,
                    num_residual_layers,
                    num_residual_hiddens)
         image_recon_module.load_state_dict(
-            torch.load("./checkpoints/" + run_name + "image_recon_module_"+obj_name+".pckl", map_location='cuda:0'), strict=False)
-        image_recon_module.cuda()
+            torch.load("./checkpoints/" + run_name + "image_recon_module_"+obj_name+".pckl", map_location=device), strict=False)
+        image_recon_module.to(device)
         image_recon_module.eval()
-
 
         with torch.no_grad():
             cnt = evaluate_model(model_vq, sub_res_hi_module, sub_res_lo_module, image_recon_module, anom_det_module, None, obj_name, mvtec_path, cnt_total)

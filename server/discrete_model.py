@@ -12,12 +12,12 @@ class VectorQuantizerEMA(nn.Module):
         self._num_embeddings = num_embeddings
 
         self._embedding = nn.Embedding(self._num_embeddings, self._embedding_dim)
-        self._embedding.weight.data.normal_()
+        torch.nn.init.normal_(self._embedding.weight)
         self._commitment_cost = commitment_cost
 
         self.register_buffer('_ema_cluster_size', torch.zeros(num_embeddings))
         self._ema_w = nn.Parameter(torch.Tensor(num_embeddings, self._embedding_dim))
-        self._ema_w.data.normal_()
+        torch.nn.init.normal_(self._ema_w)
 
         self._decay = decay
         self._epsilon = epsilon
