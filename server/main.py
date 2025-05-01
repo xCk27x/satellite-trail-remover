@@ -12,8 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
+from fastapi.responses import FileResponse
+from fastapi import HTTPException
+import shutil
+import threading
+import time
 
 # 設置 logger
 logger = logging.getLogger(__name__)
@@ -46,6 +51,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 圖片保留時間（小時）
+IMAGE_RETENTION_HOURS = 1
+
+def cleanup_old_files():
+    """清理超過保留時間的檔案"""
+    while True:
+        try:
+            upload_dir = './uploads'
+            current_time = datetime.now()
+            
+            # 遍歷 uploads 目錄及其子目錄
+            for root, dirs, files in os.walk(upload_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    
+                    # 如果檔案超過保留時間，則刪除
+                    if current_time - file_time > timedelta(hours=IMAGE_RETENTION_HOURS):
+                        try:
+                            os.remove(file_path)
+                            logger.info(f"已刪除過期檔案: {file_path}")
+                        except Exception as e:
+                            logger.error(f"刪除檔案時出錯: {file_path}, 錯誤: {str(e)}")
+            
+            # 檢查並刪除空目錄
+            for root, dirs, files in os.walk(upload_dir, topdown=False):
+                for dir in dirs:
+                    dir_path = os.path.join(root, dir)
+                    if not os.listdir(dir_path):
+                        try:
+                            os.rmdir(dir_path)
+                            logger.info(f"已刪除空目錄: {dir_path}")
+                        except Exception as e:
+                            logger.error(f"刪除目錄時出錯: {dir_path}, 錯誤: {str(e)}")
+        
+        except Exception as e:
+            logger.error(f"清理檔案時發生錯誤: {str(e)}")
+        
+        # 每小時執行一次清理
+        time.sleep(3600)
+
+# 啟動清理線程
+cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
+cleanup_thread.start()
 
 # 模型參數
 NUM_HIDDENS = 128
@@ -82,16 +132,13 @@ def evaluate_model(model, model_normal, model_normal_top, model_decode, decoder_
 
     for i_batch, sample_batched in enumerate(dataloader):
 
-        gray_batch = sample_batched["image"].cuda()
+        gray_batch = sample_batched["image"]
         gray_batch2 = gray_batch.detach().cpu().numpy()
         gray_batch2 = np.squeeze(gray_batch2)
         gray_batch2 = np.transpose(gray_batch2, (1, 2, 0)) * 255
         # print(gray_batch)
         
-
         is_normal = sample_batched["has_anomaly"].detach().numpy()[0,0]
-        if (is_normal == 1):
-          cv2.imwrite('./uploads/' + sample_batched['file_name'][0] + '.jpg', np.uint8(gray_batch2))
         
         total_gt.append(is_normal)
         true_mask = sample_batched["mask"]
@@ -118,8 +165,9 @@ def evaluate_model(model, model_normal, model_normal_top, model_decode, decoder_
         recon_image_recon2 = np.squeeze(recon_image_recon2.detach().cpu().numpy())
         recon_image_recon2 = np.transpose(recon_image_recon2, (1, 2, 0)) * 255
 
-        if (is_normal == 1):
-          cv2.imwrite('./uploads/' + sample_batched['file_name'][0] + '.jpg', np.uint8(recon_image_recon2))
+        # 儲存重建後的圖片
+        processed_filename = f"processed_{sample_batched['file_name'][0]}"
+        cv2.imwrite(os.path.join('./uploads', processed_filename), np.uint8(recon_image_recon2))
 
         up_quantized_embedding_t = model.upsample_t(embeddings_t)
         quant_join_real = torch.cat((up_quantized_embedding_t, embeddings), dim=1)
@@ -128,8 +176,9 @@ def evaluate_model(model, model_normal, model_normal_top, model_decode, decoder_
         recon_image2 = np.squeeze(recon_image2.detach().cpu().numpy())
         recon_image2 = np.transpose(recon_image2, (1, 2, 0)) * 255
 
-        if (is_normal == 1):
-          cv2.imwrite('./uploads/' + sample_batched['file_name'][0] + '.jpg', np.uint8(recon_image2))
+        # 儲存最終處理後的圖片
+        final_filename = f"final_{sample_batched['file_name'][0]}"
+        cv2.imwrite(os.path.join('./uploads', final_filename), np.uint8(recon_image2))
         
         out_mask = decoder_seg(recon_image_recon.detach(),
                                recon_image.detach())
@@ -184,7 +233,7 @@ def train_on_device(obj_names, mvtec_path, run_basename):
     ap_list = []
     cnt_total = 0
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     
     for obj_name in obj_names:
         print(obj_name)
@@ -230,7 +279,7 @@ def train_on_device(obj_names, mvtec_path, run_basename):
                    num_residual_layers,
                    num_residual_hiddens)
         image_recon_module.load_state_dict(
-            torch.load("./checkpoints/" + run_name + "image_recon_module_"+obj_name+".pckl", map_location=device), strict=False)
+            torch.load("./models/" + run_name + "image_recon_module_"+obj_name+".pckl", map_location=device), strict=False)
         image_recon_module.to(device)
         image_recon_module.eval()
 
@@ -249,23 +298,6 @@ def train_on_device(obj_names, mvtec_path, run_basename):
     # print("Localization AUROC: "+str(auroc_pixel_mean))
     # print("Localization AP: "+str(np.mean(ap_pixel_list)))
 
-def save_image(image, prefix="processed"):
-    """保存圖像到上傳目錄"""
-    try:
-        # 生成唯一的文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        filename = f"{prefix}_{timestamp}_{unique_id}.jpg"
-        filepath = os.path.join('./uploads', filename)
-        
-        # 保存圖片
-        cv2.imwrite(filepath, image)
-        logger.info(f"成功保存圖片: {filepath}")
-        return filepath
-    except Exception as e:
-        logger.error(f"保存圖片時出錯: {str(e)}")
-        raise
-
 @app.post("/process_image")
 async def process_image(file: UploadFile = File(...)):
     try:
@@ -275,18 +307,58 @@ async def process_image(file: UploadFile = File(...)):
         image = np.array(image)
         logger.info(f"原始圖片形狀: {image.shape}")
         
-        # 保存原始圖片
-        original_path = save_image(image, "original")
+        # 創建必要的目錄結構
+        upload_dir = './uploads'
+        good_dir = os.path.join(upload_dir, 'good')
+        os.makedirs(good_dir, exist_ok=True)
+        
+        # 生成唯一的文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"image_{timestamp}_{unique_id}.jpg"
+        filepath = os.path.join(good_dir, filename)
+        
+        # 保存原始圖片到 good 目錄
+        cv2.imwrite(filepath, image)
+        logger.info(f"成功保存圖片: {filepath}")
 
         obj_names = ['trajectory']
         mvtec_path = './uploads'
 
-        with torch.cuda.device(0):
+        with torch.no_grad():
             train_on_device(obj_names, mvtec_path, 'DSR')
+            
+        # 獲取處理後的圖片路徑
+        processed_filename = f"processed_{filename}"
+        final_filename = f"final_{filename}"
+        processed_path = os.path.join(upload_dir, processed_filename)
+        final_path = os.path.join(upload_dir, final_filename)
+        
+        # 檢查處理後的圖片是否存在
+        if not os.path.exists(processed_path) or not os.path.exists(final_path):
+            raise Exception("處理後的圖片未成功生成")
+            
+        # 返回圖片的 URL
+        base_url = "http://localhost:8000"  # 請根據您的實際部署環境修改
+        return {
+            "message": "圖片處理完成",
+            "images": {
+                "original": f"{base_url}/download/{filename}",
+                "processed": f"{base_url}/download/{processed_filename}",
+                "final": f"{base_url}/download/{final_filename}"
+            }
+        }
 
     except Exception as e:
         logger.error(f"處理過程發生錯誤: {str(e)}")
         return {"error": str(e)}
+
+@app.get("/download/{filename}")
+async def download_file(filename: str):
+    file_path = os.path.join('./uploads', filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="檔案不存在")
+    return FileResponse(file_path, media_type="image/jpeg", filename=filename)
 
 if __name__ == "__main__":
     import uvicorn
