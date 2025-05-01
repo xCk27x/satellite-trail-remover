@@ -23,6 +23,9 @@ logs
 .env.*
 !.env.example
 
+# Uploads directory
+uploads/
+
 # Python
 __pycache__/
 *.py[cod]
