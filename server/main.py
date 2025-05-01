@@ -2,9 +2,8 @@ import torch
 from torch.utils.data import DataLoader
 import os
 import numpy as np
-from dsr_model import SubspaceRestrictionModule, ImageReconstructionNetwork, AnomalyDetectionModule, UpsamplingModule
+from dsr_model import SubspaceRestrictionModule, ImageReconstructionNetwork, AnomalyDetectionModule
 from discrete_model import DiscreteLatentModel
-import sys
 from sklearn.metrics import roc_auc_score, average_precision_score
 from data_loader_test import TestMVTecDataset
 import cv2
@@ -12,11 +11,9 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import io
-import base64
 import logging
 from datetime import datetime
 import uuid
-import time
 
 # 設置 logger
 logger = logging.getLogger(__name__)

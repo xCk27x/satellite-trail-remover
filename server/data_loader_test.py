@@ -1,10 +1,8 @@
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import torch
 import cv2
 import glob
-import imgaug.augmenters as iaa
-from perlin import rand_perlin_2d_np
 import os
 
 class TestMVTecDataset(Dataset):

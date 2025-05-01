@@ -1,7 +1,6 @@
 import torch
 import math
 import numpy as np
-from scipy.interpolate import interp2d
 
 import cv2
 def lerp_np(x,y,w):
